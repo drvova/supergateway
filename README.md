@@ -29,6 +29,51 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
 
+## Rust (Preview)
+
+A Rust implementation is available under `rust/` for parity testing and future migration.
+
+### Build
+
+```bash
+cd rust
+cargo build
+```
+
+### Run
+
+```bash
+cd rust
+cargo run -- --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" --port 8000
+```
+
+### Runtime MCP Args Injection (Rust)
+
+You can update MCP server args and headers during runtime instead of only at startup:
+
+- **Interactive prompt**: `--runtimePrompt`
+- **Local admin endpoint**: `--runtimeAdminPort 7777` (binds to `127.0.0.1`)
+
+#### Admin API
+
+- `POST /runtime/defaults`
+- `POST /runtime/session/{id}`
+- `GET /runtime/sessions`
+
+Payload example:
+
+```json
+{
+  "extra_cli_args": ["--token", "abc123"],
+  "env": { "API_KEY": "xyz" },
+  "headers": { "Authorization": "Bearer 123" }
+}
+```
+
+Notes:
+- `extra_cli_args` and `env` updates trigger a child restart when applicable.
+- `headers` updates are applied live.
+
 ## stdio → SSE
 
 Expose an MCP stdio server as an SSE server:
