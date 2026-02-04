@@ -204,6 +204,20 @@ ngrok provides a public URL for remote access.
 
 MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
 
+## Running with Docker (Rust)
+
+Build and run the Rust image:
+
+```bash
+docker build -f docker/Dockerfile -t supergateway .
+
+docker run -it --rm -p 8000:8000 supergateway \
+    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
+    --port 8000
+```
+
+Docker pulls dependencies during build. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
+
 ## Using with Claude Desktop (SSE → stdio mode)
 
 Claude Desktop can use Supergateway’s SSE→stdio mode.
