@@ -6,10 +6,23 @@ Supported by [Supermachine](https://supermachine.ai) (hosted MCPs), [Superinterf
 
 ## Installation & Usage
 
-Run Supergateway via `npx`:
+Build the Rust binary:
 
 ```bash
-npx -y supergateway --stdio "uvx mcp-server-git"
+cd rust
+cargo build --release
+```
+
+Run Supergateway using the built binary:
+
+```bash
+./rust/target/release/supergateway --stdio "uvx mcp-server-git"
+```
+
+For development:
+
+```bash
+cargo run --manifest-path rust/Cargo.toml -- --stdio "uvx mcp-server-git"
 ```
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
@@ -29,25 +42,7 @@ npx -y supergateway --stdio "uvx mcp-server-git"
 - **`--cors`**: Enable CORS (stdio→SSE or stdio→WS mode). Use `--cors` with no values to allow all origins, or supply one or more allowed origins (e.g. `--cors "http://example.com"` or `--cors "/example\\.com$/"` for regex matching).
 - **`--healthEndpoint /healthz`**: Register one or more endpoints (stdio→SSE or stdio→WS mode; can be used multiple times) that respond with `"ok"`
 
-## Rust (Preview)
-
-A Rust implementation is available under `rust/` for parity testing and future migration.
-
-### Build
-
-```bash
-cd rust
-cargo build
-```
-
-### Run
-
-```bash
-cd rust
-cargo run -- --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" --port 8000
-```
-
-### Runtime MCP Args Injection (Rust)
+## Runtime MCP Args Injection
 
 You can update MCP server args and headers during runtime instead of only at startup:
 
@@ -96,7 +91,7 @@ You should see spans/logs in your local collector. If you want to adjust local v
 Expose an MCP stdio server as an SSE server:
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
     --port 8000 --baseUrl http://localhost:8000 \
     --ssePath /sse --messagePath /message
@@ -110,7 +105,7 @@ npx -y supergateway \
 Connect to a remote SSE server and expose locally via stdio:
 
 ```bash
-npx -y supergateway --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
+./rust/target/release/supergateway --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
 ```
 
 Useful for integrating remote SSE MCP servers into local command-line environments.
@@ -118,7 +113,7 @@ Useful for integrating remote SSE MCP servers into local command-line environmen
 You can also pass headers when sending requests. This is useful for authentication:
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --sse "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app" \
     --oauth2Bearer "some-access-token" \
     --header "X-My-Header: another-header-value"
@@ -129,13 +124,13 @@ npx -y supergateway \
 Connect to a remote Streamable HTTP server and expose locally via stdio:
 
 ```bash
-npx -y supergateway --streamableHttp "https://mcp-server.example.com/mcp"
+./rust/target/release/supergateway --streamableHttp "https://mcp-server.example.com/mcp"
 ```
 
 This mode is useful for connecting to MCP servers that use the newer Streamable HTTP transport protocol. Like SSE mode, you can also pass headers for authentication:
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --streamableHttp "https://mcp-server.example.com/mcp" \
     --oauth2Bearer "some-access-token" \
     --header "X-My-Header: another-header-value"
@@ -148,7 +143,7 @@ Expose an MCP stdio server as a Streamable HTTP server.
 ### Stateless mode
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
     --outputTransport streamableHttp \
     --port 8000
@@ -157,7 +152,7 @@ npx -y supergateway \
 ### Stateful mode
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
     --outputTransport streamableHttp --stateful \
     --sessionTimeout 60000 --port 8000
@@ -170,7 +165,7 @@ The Streamable HTTP endpoint defaults to `http://localhost:8000/mcp` (configurab
 Expose an MCP stdio server as a WebSocket server:
 
 ```bash
-npx -y supergateway \
+./rust/target/release/supergateway \
     --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
     --port 8000 --outputTransport ws --messagePath /message
 ```
@@ -182,7 +177,7 @@ npx -y supergateway \
 1. **Run Supergateway**:
 
 ```bash
-npx -y supergateway --port 8000 \
+./rust/target/release/supergateway --port 8000 \
     --stdio "npx -y @modelcontextprotocol/server-filesystem /Users/MyName/Desktop"
 ```
 
@@ -199,7 +194,7 @@ You can now list tools, resources, or perform MCP actions via Supergateway.
 Use [ngrok](https://ngrok.com/) to share your local MCP server publicly:
 
 ```bash
-npx -y supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-filesystem ."
+./rust/target/release/supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-filesystem ."
 
 # In another terminal:
 ngrok http 8000
@@ -209,87 +204,18 @@ ngrok provides a public URL for remote access.
 
 MCP server will be available at URL similar to: https://1234-567-890-12-456.ngrok-free.app/sse
 
-## Running with Docker
-
-A Docker-based workflow avoids local Node.js setup. A ready-to-run Docker image is available here:
-[supercorp/supergateway](https://hub.docker.com/r/supercorp/supergateway). Also on GHCR: [ghcr.io/supercorp-ai/supergateway](https://github.com/supercorp-ai/supergateway/pkgs/container/supergateway)
-
-### Using the Official Image
-
-```bash
-docker run -it --rm -p 8000:8000 supercorp/supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
-    --port 8000
-```
-
-Docker pulls the image automatically. The MCP server runs in the container’s root directory (`/`). You can mount host directories if needed.
-
-#### Images with dependencies
-
-Pull any of these pre-built Supergateway images for various dependencies you might need.
-
-- **uvx**
-  Supergateway + uv/uvx, so you can call `uvx` directly:
-
-  ```bash
-  docker run -it --rm -p 8000:8000 supercorp/supergateway:uvx \
-    --stdio "uvx mcp-server-fetch"
-  ```
-
-- **deno**
-  Supergateway + Deno, ready to run Deno-based MCP servers:
-  ```bash
-  docker run -it --rm -p 8000:8000 supercorp/supergateway:deno \
-    --stdio "deno run -A jsr:@omedia/mcp-server-drupal --drupal-url https://your-drupal-server.com"
-  ```
-
-### Building the Image Yourself
-
-Use provided Dockerfile:
-
-```bash
-docker build -f docker/base.Dockerfile -t supergateway .
-
-docker run -it --rm -p 8000:8000 supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem ."
-```
-
 ## Using with Claude Desktop (SSE → stdio mode)
 
 Claude Desktop can use Supergateway’s SSE→stdio mode.
 
-### NPX-based MCP Server Example
+### Local Binary Example
 
 ```json
 {
   "mcpServers": {
-    "supermachineExampleNpx": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "supergateway",
-        "--sse",
-        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
-      ]
-    }
-  }
-}
-```
-
-### Docker-based MCP Server Example
-
-```json
-{
-  "mcpServers": {
-    "supermachineExampleDocker": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "supercorp/supergateway",
-        "--sse",
-        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
-      ]
+    "supermachineExample": {
+      "command": "/path/to/supergateway",
+      "args": ["--sse", "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"]
     }
   }
 }
@@ -299,39 +225,14 @@ Claude Desktop can use Supergateway’s SSE→stdio mode.
 
 Cursor can also integrate with Supergateway in SSE→stdio mode. The configuration is similar to Claude Desktop.
 
-### NPX-based MCP Server Example for Cursor
+### Local Binary Example for Cursor
 
 ```json
 {
   "mcpServers": {
-    "cursorExampleNpx": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "supergateway",
-        "--sse",
-        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
-      ]
-    }
-  }
-}
-```
-
-### Docker-based MCP Server Example for Cursor
-
-```json
-{
-  "mcpServers": {
-    "cursorExampleDocker": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "supercorp/supergateway",
-        "--sse",
-        "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"
-      ]
+    "cursorExample": {
+      "command": "/path/to/supergateway",
+      "args": ["--sse", "https://mcp-server-ab71a6b2-cd55-49d0-adba-562bc85956e3.supermachine.app"]
     }
   }
 }
@@ -390,20 +291,15 @@ Issues and PRs welcome. Please open one if you encounter problems or have featur
 
 ## Tests
 
-Supergateway is tested with the Node Test Runner.
-
-To run the suite locally you need Node **24+**. Using [nvm](https://github.com/nvm-sh/nvm) you can install and activate it with:
+Rust build sanity checks:
 
 ```bash
-nvm install 24
-nvm use 24
-npm install
-npm run build
-npm test
+cd rust
+cargo check
+cargo test
 ```
 
-The `tests/helpers/mock-mcp-server.js` script provides a local MCP server so all
-tests run without network access.
+If you add Rust integration tests, keep them self-contained and offline-friendly.
 
 ## License
 

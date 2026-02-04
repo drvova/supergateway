@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -30,17 +31,26 @@ struct AppState {
     stdio_cmd: String,
 }
 
+#[derive(Clone)]
 struct SessionResponseGuard {
+    inner: Arc<SessionResponseGuardInner>,
+}
+
+struct SessionResponseGuardInner {
     manager: Arc<SessionManager>,
     session_id: String,
     reason: String,
+    fired: AtomicBool,
 }
 
 impl Drop for SessionResponseGuard {
     fn drop(&mut self) {
-        let manager = self.manager.clone();
-        let session_id = self.session_id.clone();
-        let reason = self.reason.clone();
+        if self.inner.fired.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let manager = self.inner.manager.clone();
+        let session_id = self.inner.session_id.clone();
+        let reason = self.inner.reason.clone();
         tokio::spawn(async move {
             manager.session_dec(&session_id, &reason).await;
         });
@@ -54,9 +64,12 @@ fn attach_session_guard(
     reason: &str,
 ) {
     response.extensions_mut().insert(SessionResponseGuard {
-        manager,
-        session_id,
-        reason: reason.to_string(),
+        inner: Arc::new(SessionResponseGuardInner {
+            manager,
+            session_id,
+            reason: reason.to_string(),
+            fired: AtomicBool::new(false),
+        }),
     });
 }
 

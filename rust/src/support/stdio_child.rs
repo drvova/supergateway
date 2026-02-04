@@ -140,26 +140,25 @@ impl StdioChild {
     }
 
     pub async fn is_alive(&self) -> bool {
-        let mut needs_clear = false;
-        {
+        let should_clear = {
             let mut guard = self.child.lock().await;
             let Some(child) = guard.as_mut() else {
                 return false;
             };
             match child.try_wait() {
+                Ok(None) => return true,
                 Ok(Some(_status)) => {
                     *guard = None;
-                    needs_clear = true;
+                    true
                 }
-                Ok(None) => return true,
                 Err(err) => {
                     tracing::error!("Failed to poll child status: {err}");
                     *guard = None;
-                    needs_clear = true;
+                    true
                 }
             }
-        }
-        if needs_clear {
+        };
+        if should_clear {
             let mut stdin = self.stdin.lock().await;
             *stdin = None;
         }

@@ -100,19 +100,4 @@ impl SessionAccessCounter {
         }
     }
 
-    pub async fn clear(&self, session_id: &str, run_cleanup: bool, reason: &str) {
-        tracing::info!("SessionAccessCounter.clear() {session_id}, caused by {reason}");
-        let mut sessions = self.sessions.lock().await;
-        let Some(state) = sessions.remove(session_id) else {
-            tracing::info!("Attempted to clear non-existent session {session_id}");
-            return;
-        };
-        if let SessionState::Timeout { handle } = state {
-            handle.abort();
-        }
-        drop(sessions);
-        if run_cleanup {
-            (self.cleanup)(session_id.to_string());
-        }
-    }
 }
