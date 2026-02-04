@@ -86,6 +86,19 @@ cargo run -- --stdio "./my-mcp-server --root ./my-folder" --port 8000
 ```
 You should see spans/logs in your local collector. If you want to adjust local verbosity, set `RUST_LOG=debug` or `RUST_LOG=info`.
 
+## Zeabur Deployment (Rust Buildpack)
+
+This repo includes `zbpack.json` to deploy the Rust service from the `rust/` subdirectory and ignore the Dockerfile on Zeabur.
+
+Key settings:
+- `rust.app_dir`: `rust`
+- `rust.entry`: `supergateway`
+- `ignore_dockerfile`: `true`
+
+Notes:
+- Zeabur provides a `PORT` env var; Supergateway uses it automatically when `--port` is not set.
+- You can still pass normal CLI args in the Zeabur start command (for example, `--stdio "./my-mcp-server --root /data"`).
+
 ## stdio → SSE
 
 Expose an MCP stdio server as an SSE server:

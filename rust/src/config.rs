@@ -97,8 +97,7 @@ pub fn parse_config() -> Result<Config, ConfigError> {
         .arg(
             Arg::new("port")
                 .long("port")
-                .value_name("PORT")
-                .default_value("8000"),
+                .value_name("PORT"),
         )
         .arg(
             Arg::new("baseUrl")
@@ -211,6 +210,8 @@ pub fn parse_config() -> Result<Config, ConfigError> {
 
     let port = matches
         .get_one::<String>("port")
+        .cloned()
+        .or_else(|| env::var("PORT").ok())
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(8000);
     let base_url = matches
