@@ -6,14 +6,12 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 use crate::config::Config;
-use crate::support::logger::Logger;
 use crate::support::signals::install_signal_handlers;
 use crate::runtime::{RuntimeApplyResult, RuntimeScope, RuntimeUpdateRequest};
 use crate::runtime::store::RuntimeArgsStore;
 
 pub async fn run(
     config: Config,
-    logger: Logger,
     runtime: RuntimeArgsStore,
     mut updates: mpsc::Receiver<RuntimeUpdateRequest>,
 ) -> Result<(), String> {
@@ -21,21 +19,22 @@ pub async fn run(
         .streamable_http
         .clone()
         .ok_or("streamableHttp url is required")?;
-    logger.info(format!("  - streamableHttp: {streamable_http_url}"));
-    logger.info(format!("  - Headers: {}", serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())));
-    logger.info("Connecting to Streamable HTTP...");
+    tracing::info!("  - streamableHttp: {streamable_http_url}");
+    tracing::info!(
+        "  - Headers: {}",
+        serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())
+    );
+    tracing::info!("Connecting to Streamable HTTP...");
 
-    install_signal_handlers(logger.clone(), None);
+    install_signal_handlers(None);
 
     let session_id: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
     let session_for_sse = session_id.clone();
     let headers = config.headers.clone();
-    let logger_clone = logger.clone();
 
     let http = reqwest::Client::new();
     let session_clone = session_id.clone();
     let runtime_clone = runtime.clone();
-    let logger_clone2 = logger_clone.clone();
     let headers_clone = headers.clone();
     let http_clone = http.clone();
     let url_clone = streamable_http_url.clone();
@@ -53,7 +52,7 @@ pub async fn run(
             let response = match req.send().await {
                 Ok(resp) => resp,
                 Err(err) => {
-                    logger_clone2.error(format!("Streamable HTTP SSE connection failed: {err}"));
+                    tracing::error!("Streamable HTTP SSE connection failed: {err}");
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     continue;
                 }
@@ -71,7 +70,7 @@ pub async fn run(
                         }
                     }
                     Err(err) => {
-                        logger_clone2.error(format!("Streamable HTTP SSE error: {err}"));
+                        tracing::error!("Streamable HTTP SSE error: {err}");
                         break;
                     }
                 }
@@ -110,7 +109,7 @@ pub async fn run(
             continue;
         }
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
-            logger.error(format!("Invalid JSON from stdin: {line}"));
+            tracing::error!("Invalid JSON from stdin: {line}");
             continue;
         };
 
@@ -132,7 +131,10 @@ pub async fn run(
                 println!("{}", json);
             }
         } else {
-            logger.error(format!("Streamable HTTP request failed with status {}", response.status()));
+            tracing::error!(
+                "Streamable HTTP request failed with status {}",
+                response.status()
+            );
         }
     }
 

@@ -7,29 +7,29 @@ use tokio::sync::{RwLock, mpsc};
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 use crate::config::Config;
-use crate::support::logger::Logger;
 use crate::support::signals::install_signal_handlers;
 use crate::runtime::{RuntimeApplyResult, RuntimeScope, RuntimeUpdateRequest};
 use crate::runtime::store::RuntimeArgsStore;
 
 pub async fn run(
     config: Config,
-    logger: Logger,
     runtime: RuntimeArgsStore,
     mut updates: mpsc::Receiver<RuntimeUpdateRequest>,
 ) -> Result<(), String> {
     let sse_url = config.sse.clone().ok_or("sse url is required")?;
-    logger.info(format!("  - sse: {sse_url}"));
-    logger.info(format!("  - Headers: {}", serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())));
-    logger.info("Connecting to SSE...");
+    tracing::info!("  - sse: {sse_url}");
+    tracing::info!(
+        "  - Headers: {}",
+        serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())
+    );
+    tracing::info!("Connecting to SSE...");
 
-    install_signal_handlers(logger.clone(), None);
+    install_signal_handlers(None);
 
     let message_endpoint: Arc<RwLock<Option<Url>>> = Arc::new(RwLock::new(None));
     let headers = config.headers.clone();
     let sse_url_clone = sse_url.clone();
     let message_endpoint_clone = message_endpoint.clone();
-    let logger_clone = logger.clone();
     let runtime_clone = runtime.clone();
 
     tokio::spawn(async move {
@@ -41,7 +41,7 @@ pub async fn run(
         let response = match req.send().await {
             Ok(resp) => resp,
             Err(err) => {
-                logger_clone.error(format!("SSE connection failed: {err}"));
+                tracing::error!("SSE connection failed: {err}");
                 return;
             }
         };
@@ -54,7 +54,7 @@ pub async fn run(
                         if let Ok(url) = Url::parse(&sse_url_clone) {
                             if let Ok(joined) = url.join(&event.data) {
                                 *message_endpoint_clone.write().await = Some(joined.clone());
-                                logger_clone.info(format!("Received message endpoint: {joined}"));
+                                tracing::info!("Received message endpoint: {joined}");
                             }
                         }
                         continue;
@@ -67,7 +67,7 @@ pub async fn run(
                     }
                 }
                 Err(err) => {
-                    logger_clone.error(format!("SSE error: {err}"));
+                    tracing::error!("SSE error: {err}");
                     break;
                 }
             }
@@ -107,7 +107,7 @@ pub async fn run(
             continue;
         }
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
-            logger.error(format!("Invalid JSON from stdin: {line}"));
+            tracing::error!("Invalid JSON from stdin: {line}");
             continue;
         };
 
@@ -130,7 +130,7 @@ pub async fn run(
                 println!("{}", json);
             }
         } else {
-            logger.error(format!("SSE request failed with status {}", response.status()));
+            tracing::error!("SSE request failed with status {}", response.status());
         }
     }
 

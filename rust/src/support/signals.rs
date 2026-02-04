@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use tokio::signal::unix::{signal, SignalKind};
 
-use crate::support::logger::Logger;
-
-pub fn install_signal_handlers(logger: Logger, cleanup: Option<Arc<dyn Fn() + Send + Sync>>) {
-    let handler = move |name: &'static str, logger: Logger, cleanup: Option<Arc<dyn Fn() + Send + Sync>>| {
+pub fn install_signal_handlers(cleanup: Option<Arc<dyn Fn() + Send + Sync>>) {
+    let handler = move |name: &'static str, cleanup: Option<Arc<dyn Fn() + Send + Sync>>| {
         tokio::spawn(async move {
             if let Ok(mut sig) = signal(match name {
                 "SIGINT" => SignalKind::interrupt(),
@@ -13,7 +11,7 @@ pub fn install_signal_handlers(logger: Logger, cleanup: Option<Arc<dyn Fn() + Se
                 _ => SignalKind::hangup(),
             }) {
                 sig.recv().await;
-                logger.info(format!("Caught {name}. Exiting..."));
+                tracing::info!("Caught {name}. Exiting...");
                 if let Some(cleanup) = cleanup {
                     cleanup();
                 }
@@ -22,7 +20,7 @@ pub fn install_signal_handlers(logger: Logger, cleanup: Option<Arc<dyn Fn() + Se
         });
     };
 
-    handler("SIGINT", logger.clone(), cleanup.clone());
-    handler("SIGTERM", logger.clone(), cleanup.clone());
-    handler("SIGHUP", logger, cleanup);
+    handler("SIGINT", cleanup.clone());
+    handler("SIGTERM", cleanup.clone());
+    handler("SIGHUP", cleanup);
 }

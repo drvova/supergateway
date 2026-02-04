@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::support::cors::build_cors_layer;
-use crate::support::logger::Logger;
 use crate::support::session_access_counter::SessionAccessCounter;
 use crate::support::signals::install_signal_handlers;
 use crate::support::stdio_child::{CommandSpec, StdioChild};
@@ -33,7 +32,6 @@ struct AppState {
 
 pub async fn run(
     config: Config,
-    logger: Logger,
     runtime: RuntimeArgsStore,
     mut updates: mpsc::Receiver<RuntimeUpdateRequest>,
 ) -> Result<(), String> {
@@ -42,22 +40,25 @@ pub async fn run(
         .clone()
         .ok_or("stdio command is required")?;
 
-    logger.info(format!("  - Headers: {}", serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())));
-    logger.info(format!("  - port: {}", config.port));
-    logger.info(format!("  - stdio: {}", stdio_cmd));
-    logger.info(format!("  - streamableHttpPath: {}", config.streamable_http_path));
+    tracing::info!(
+        "  - Headers: {}",
+        serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())
+    );
+    tracing::info!("  - port: {}", config.port);
+    tracing::info!("  - stdio: {}", stdio_cmd);
+    tracing::info!("  - streamableHttpPath: {}", config.streamable_http_path);
     if config.stateful {
-        logger.info(format!(
+        tracing::info!(
             "  - Session timeout: {}",
             config
                 .session_timeout
                 .map(|v| format!("{v}ms"))
                 .unwrap_or_else(|| "disabled".to_string())
-        ));
+        );
     }
 
     let spec = parse_command_spec(&stdio_cmd)?;
-    let manager = Arc::new(SessionManager::new(spec, logger.clone(), runtime.clone(), config.session_timeout));
+    let manager = Arc::new(SessionManager::new(spec, runtime.clone(), config.session_timeout));
 
     let state = AppState {
         runtime: runtime.clone(),
@@ -146,14 +147,14 @@ pub async fn run(
 
     let router = router.with_state(state.clone());
 
-    install_signal_handlers(logger.clone(), None);
+    install_signal_handlers(None);
 
     let addr: std::net::SocketAddr = ([0, 0, 0, 0], config.port).into();
-    logger.info(format!("Listening on port {}", config.port));
-    logger.info(format!(
+    tracing::info!("Listening on port {}", config.port);
+    tracing::info!(
         "StreamableHttp endpoint: http://localhost:{}{}",
         config.port, config.streamable_http_path
-    ));
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -388,8 +389,8 @@ struct Session {
 }
 
 impl Session {
-    async fn new(id: String, spec: CommandSpec, logger: Logger, runtime: RuntimeArgs) -> Result<Self, String> {
-        let child = Arc::new(StdioChild::new(spec, logger, false));
+    async fn new(id: String, spec: CommandSpec, runtime: RuntimeArgs) -> Result<Self, String> {
+        let child = Arc::new(StdioChild::new(spec, false));
         child.spawn(&runtime).await?;
         let (tx, _) = broadcast::channel(64);
         Ok(Session {
@@ -446,22 +447,20 @@ impl Session {
 
 struct SessionManager {
     spec: CommandSpec,
-    logger: Logger,
     runtime: RuntimeArgsStore,
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     session_counter: Option<Arc<SessionAccessCounter>>,
 }
 
 impl SessionManager {
-    fn new(spec: CommandSpec, logger: Logger, runtime: RuntimeArgsStore, session_timeout: Option<u64>) -> Self {
+    fn new(spec: CommandSpec, runtime: RuntimeArgsStore, session_timeout: Option<u64>) -> Self {
         let sessions: Arc<Mutex<HashMap<String, Arc<Session>>>> = Arc::new(Mutex::new(HashMap::new()));
         let session_counter = session_timeout.map(|timeout| {
-            let logger_clone = logger.clone();
             let sessions_clone = sessions.clone();
             Arc::new(SessionAccessCounter::new(
                 timeout,
                 Arc::new(move |session_id| {
-                    logger_clone.info(format!("Session {session_id} timed out, cleaning up"));
+                    tracing::info!("Session {session_id} timed out, cleaning up");
                     let sessions_inner = sessions_clone.clone();
                     tokio::spawn(async move {
                         if let Some(session) = sessions_inner.lock().await.remove(&session_id) {
@@ -469,12 +468,10 @@ impl SessionManager {
                         }
                     });
                 }),
-                logger.clone(),
             ))
         });
         Self {
             spec,
-            logger,
             runtime,
             sessions,
             session_counter,
@@ -484,7 +481,8 @@ impl SessionManager {
     async fn create_session(&self) -> Result<Arc<Session>, String> {
         let session_id = Uuid::new_v4().to_string();
         let runtime = self.runtime.get_effective(Some(&session_id)).await;
-        let session = Arc::new(Session::new(session_id.clone(), self.spec.clone(), self.logger.clone(), runtime).await?);
+        let session =
+            Arc::new(Session::new(session_id.clone(), self.spec.clone(), runtime).await?);
         session.clone().start_routing().await;
         let mut sessions = self.sessions.lock().await;
         sessions.insert(session_id.clone(), session.clone());

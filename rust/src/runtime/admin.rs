@@ -8,7 +8,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::future::BoxFuture;
-use crate::support::logger::Logger;
 use crate::runtime::{RuntimeApplyResult, RuntimeScope, RuntimeUpdate};
 use crate::runtime::store::{RuntimeArgsStore, RuntimeArgsUpdate};
 
@@ -22,7 +21,6 @@ pub async fn spawn_admin_server(
     addr: SocketAddr,
     runtime: RuntimeArgsStore,
     handler: Arc<dyn Fn(RuntimeUpdate) -> BoxFuture<'static, RuntimeApplyResult> + Send + Sync>,
-    logger: Logger,
 ) {
     let state = AdminState { runtime, handler };
 
@@ -33,18 +31,18 @@ pub async fn spawn_admin_server(
         .with_state(state)
         .layer(middleware::from_fn(only_loopback));
 
-    logger.info(format!("Runtime admin endpoint listening on http://{addr}"));
+    tracing::info!("Runtime admin endpoint listening on http://{addr}");
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(err) => {
-            logger.error(format!("Runtime admin bind error: {err}"));
+            tracing::error!("Runtime admin bind error: {err}");
             return;
         }
     };
     let server = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>());
     if let Err(err) = server.await {
-        logger.error(format!("Runtime admin server error: {err}"));
+        tracing::error!("Runtime admin server error: {err}");
     }
 }
 

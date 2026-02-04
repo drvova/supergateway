@@ -74,6 +74,23 @@ Notes:
 - `extra_cli_args` and `env` updates trigger a child restart when applicable.
 - `headers` updates are applied live.
 
+### Telemetry (Rust)
+
+The Rust build uses `tracing` with optional OpenTelemetry OTLP export. Logs always print locally (stdout or stderr depending on `--outputTransport`).
+
+**OTLP env vars:**
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (base endpoint for traces and logs)
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (override for traces)
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (override for logs)
+
+**Quick smoke test:**
+```bash
+cd rust
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+cargo run -- --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" --port 8000
+```
+You should see spans/logs in your local collector. If you want to adjust local verbosity, set `RUST_LOG=debug` or `RUST_LOG=info`.
+
 ## stdio → SSE
 
 Expose an MCP stdio server as an SSE server:

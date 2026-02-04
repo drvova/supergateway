@@ -6,7 +6,6 @@ use tokio::sync::{broadcast, Mutex};
 use tokio_util::codec::{FramedRead, LinesCodec};
 use futures::StreamExt;
 
-use crate::support::logger::Logger;
 use crate::types::RuntimeArgs;
 
 #[derive(Debug, Clone)]
@@ -31,7 +30,6 @@ impl CommandSpec {
 
 pub struct StdioChild {
     spec: CommandSpec,
-    logger: Logger,
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
     sender: broadcast::Sender<serde_json::Value>,
@@ -40,11 +38,10 @@ pub struct StdioChild {
 }
 
 impl StdioChild {
-    pub fn new(spec: CommandSpec, logger: Logger, exit_on_close: bool) -> Self {
+    pub fn new(spec: CommandSpec, exit_on_close: bool) -> Self {
         let (sender, _) = broadcast::channel(256);
         Self {
             spec,
-            logger,
             stdin: Mutex::new(None),
             child: Mutex::new(None),
             sender,
@@ -77,7 +74,6 @@ impl StdioChild {
             *guard = Some(child);
         }
 
-        let logger = self.logger.clone();
         let sender = self.sender.clone();
         let restarting = self.restarting.clone();
         let exit_on_close = self.exit_on_close;
@@ -91,38 +87,37 @@ impl StdioChild {
                         }
                         match serde_json::from_str::<serde_json::Value>(&line) {
                             Ok(json) => {
-                                logger.debug(format!("Child → Gateway: {json}"));
+                                tracing::debug!("Child → Gateway: {json}");
                                 let _ = sender.send(json);
                             }
                             Err(_) => {
-                                logger.error(format!("Child non-JSON: {line}"));
+                                tracing::error!("Child non-JSON: {line}");
                             }
                         }
                     }
                     Err(err) => {
-                        logger.error(format!("Error reading child stdout: {err}"));
+                        tracing::error!("Error reading child stdout: {err}");
                         break;
                     }
                 }
             }
             if exit_on_close && !restarting.load(Ordering::SeqCst) {
-                logger.error("Child stdout closed. Exiting...");
+                tracing::error!("Child stdout closed. Exiting...");
                 std::process::exit(1);
             }
         });
 
-        let logger = self.logger.clone();
         tokio::spawn(async move {
             let mut lines = FramedRead::new(stderr, LinesCodec::new());
             while let Some(line) = lines.next().await {
                 match line {
                     Ok(line) => {
                         if !line.trim().is_empty() {
-                            logger.error(format!("Child stderr: {line}"));
+                            tracing::error!("Child stderr: {line}");
                         }
                     }
                     Err(err) => {
-                        logger.error(format!("Error reading child stderr: {err}"));
+                        tracing::error!("Error reading child stderr: {err}");
                         break;
                     }
                 }

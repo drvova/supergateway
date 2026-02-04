@@ -19,6 +19,14 @@ futures = "0.3"
 eventsource-stream = "0.2"
 shell-words = "1.1"
 tower-http = { version = "0.5", features = ["cors"] }
+arc-swap = "1.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-opentelemetry = "0.32"
+opentelemetry = "0.31"
+opentelemetry_sdk = "0.31"
+opentelemetry-otlp = "0.31"
+opentelemetry-appender-tracing = "0.31"
 
 [profile.release]
 codegen-units = 1

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
@@ -21,33 +22,34 @@ pub struct UpdateResult {
 
 #[derive(Clone, Default)]
 pub struct RuntimeArgsStore {
-    global: Arc<RwLock<RuntimeArgs>>,
+    global: Arc<ArcSwap<RuntimeArgs>>,
     sessions: Arc<RwLock<HashMap<String, RuntimeArgs>>>,
 }
 
 impl RuntimeArgsStore {
     pub fn new(initial: RuntimeArgs) -> Self {
         Self {
-            global: Arc::new(RwLock::new(initial)),
+            global: Arc::new(ArcSwap::from_pointee(initial)),
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     pub async fn update_global(&self, update: RuntimeArgsUpdate) -> UpdateResult {
         let mut result = UpdateResult::default();
-        let mut guard = self.global.write().await;
+        let mut next = (*self.global.load_full()).clone();
         if let Some(extra) = update.extra_cli_args {
-            guard.extra_cli_args = extra;
+            next.extra_cli_args = extra;
             result.restart_needed = true;
         }
         if let Some(env) = update.env {
-            guard.env = env;
+            next.env = env;
             result.restart_needed = true;
         }
         if let Some(headers) = update.headers {
-            guard.headers = headers;
+            next.headers = headers;
             result.headers_changed = true;
         }
+        self.global.store(Arc::new(next));
         result
     }
 
@@ -71,14 +73,14 @@ impl RuntimeArgsStore {
     }
 
     pub async fn get_effective(&self, session_id: Option<&str>) -> RuntimeArgs {
-        let global = self.global.read().await.clone();
+        let global = self.global.load_full();
         if let Some(id) = session_id {
             let sessions = self.sessions.read().await;
             if let Some(overlay) = sessions.get(id) {
-                return RuntimeArgs::merge(&global, overlay);
+                return RuntimeArgs::merge(global.as_ref(), overlay);
             }
         }
-        global
+        global.as_ref().clone()
     }
 
     pub async fn list_sessions(&self) -> Vec<String> {

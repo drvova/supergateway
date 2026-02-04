@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::support::cors::build_cors_layer;
-use crate::support::logger::Logger;
 use crate::support::signals::install_signal_handlers;
 use crate::support::stdio_child::{CommandSpec, StdioChild};
 use crate::runtime::{RuntimeApplyResult, RuntimeScope, RuntimeUpdateRequest};
@@ -37,7 +36,6 @@ struct MessageQuery {
 
 pub async fn run(
     config: Config,
-    logger: Logger,
     runtime: RuntimeArgsStore,
     mut updates: mpsc::Receiver<RuntimeUpdateRequest>,
 ) -> Result<(), String> {
@@ -45,17 +43,20 @@ pub async fn run(
         .stdio
         .clone()
         .ok_or("stdio command is required")?;
-    logger.info(format!("  - Headers: {}", serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())));
-    logger.info(format!("  - port: {}", config.port));
-    logger.info(format!("  - stdio: {}", stdio_cmd));
+    tracing::info!(
+        "  - Headers: {}",
+        serde_json::to_string(&config.headers).unwrap_or_else(|_| "(none)".into())
+    );
+    tracing::info!("  - port: {}", config.port);
+    tracing::info!("  - stdio: {}", stdio_cmd);
     if !config.base_url.is_empty() {
-        logger.info(format!("  - baseUrl: {}", config.base_url));
+        tracing::info!("  - baseUrl: {}", config.base_url);
     }
-    logger.info(format!("  - ssePath: {}", config.sse_path));
-    logger.info(format!("  - messagePath: {}", config.message_path));
+    tracing::info!("  - ssePath: {}", config.sse_path);
+    tracing::info!("  - messagePath: {}", config.message_path);
 
     let spec = parse_command_spec(&stdio_cmd)?;
-    let child = Arc::new(StdioChild::new(spec, logger.clone(), true));
+    let child = Arc::new(StdioChild::new(spec, true));
     let initial_args = runtime.get_effective(None).await;
     child.spawn(&initial_args).await?;
 
@@ -114,7 +115,7 @@ pub async fn run(
         router = router.layer(cors);
     }
 
-    install_signal_handlers(logger.clone(), None);
+    install_signal_handlers(None);
 
     let mut rx = child.subscribe();
     tokio::spawn(async move {
@@ -138,15 +139,15 @@ pub async fn run(
     });
 
     let addr: std::net::SocketAddr = ([0, 0, 0, 0], config.port).into();
-    logger.info(format!("Listening on port {}", config.port));
-    logger.info(format!(
+    tracing::info!("Listening on port {}", config.port);
+    tracing::info!(
         "SSE endpoint: http://localhost:{}{}",
         config.port, config.sse_path
-    ));
-    logger.info(format!(
+    );
+    tracing::info!(
         "POST messages: http://localhost:{}{}",
         config.port, config.message_path
-    ));
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await

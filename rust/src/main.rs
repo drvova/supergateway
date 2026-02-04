@@ -14,7 +14,7 @@ use crate::gateways::{
     sse_to_stdio, stdio_to_sse, stdio_to_streamable_http, stdio_to_ws,
     streamable_http_to_stdio,
 };
-use crate::support::logger::Logger;
+use crate::support::telemetry::init_telemetry;
 use crate::runtime::{RuntimeApplyResult, RuntimeUpdate, RuntimeUpdateRequest};
 use crate::runtime::admin::spawn_admin_server;
 use crate::runtime::prompt::spawn_prompt;
@@ -31,12 +31,12 @@ async fn main() {
         }
     };
 
-    let logger = Logger::new(config.log_level, config.output_transport);
-    logger.info("Starting...");
-    logger.info(
+    let _telemetry = init_telemetry(config.log_level, config.output_transport);
+    tracing::info!("Starting...");
+    tracing::info!(
         "Supergateway is supported by Supermachine (hosted MCPs) - https://supermachine.ai",
     );
-    logger.info(format!("  - outputTransport: {:?}", config.output_transport));
+    tracing::info!("  - outputTransport: {:?}", config.output_transport);
 
     let runtime_store = RuntimeArgsStore::new(RuntimeArgs {
         headers: config.headers.clone(),
@@ -46,9 +46,8 @@ async fn main() {
     let (update_tx, update_rx) = mpsc::channel::<RuntimeUpdateRequest>(32);
 
     if config.runtime_prompt {
-        let mut prompt_rx = spawn_prompt(logger.clone());
+        let mut prompt_rx = spawn_prompt();
         let update_tx = update_tx.clone();
-        let logger_clone = logger.clone();
         tokio::spawn(async move {
             while let Some(update) = prompt_rx.recv().await {
                 let (resp_tx, resp_rx) = oneshot::channel();
@@ -60,11 +59,11 @@ async fn main() {
                     .await
                     .is_err()
                 {
-                    logger_clone.error("Runtime update channel closed");
+                    tracing::error!("Runtime update channel closed");
                     break;
                 }
                 if let Ok(result) = resp_rx.await {
-                    logger_clone.info(format!("Runtime update: {}", result.message));
+                    tracing::info!("Runtime update: {}", result.message);
                 }
             }
         });
@@ -94,30 +93,29 @@ async fn main() {
             }) as BoxFuture<'static, RuntimeApplyResult>
         });
         let runtime_clone = runtime_store.clone();
-        let logger_clone = logger.clone();
         tokio::spawn(async move {
-            spawn_admin_server(addr, runtime_clone, handler, logger_clone).await;
+            spawn_admin_server(addr, runtime_clone, handler).await;
         });
     }
 
     let result = if config.stdio.is_some() {
         match config.output_transport {
-            OutputTransport::Sse => stdio_to_sse::run(config, logger, runtime_store, update_rx).await,
-            OutputTransport::Ws => stdio_to_ws::run(config, logger, runtime_store, update_rx).await,
+            OutputTransport::Sse => stdio_to_sse::run(config, runtime_store, update_rx).await,
+            OutputTransport::Ws => stdio_to_ws::run(config, runtime_store, update_rx).await,
             OutputTransport::StreamableHttp => {
-                stdio_to_streamable_http::run(config, logger, runtime_store, update_rx).await
+                stdio_to_streamable_http::run(config, runtime_store, update_rx).await
             }
             OutputTransport::Stdio => Err("stdio→stdio is not supported".to_string()),
         }
     } else if config.sse.is_some() {
         match config.output_transport {
-            OutputTransport::Stdio => sse_to_stdio::run(config, logger, runtime_store, update_rx).await,
+            OutputTransport::Stdio => sse_to_stdio::run(config, runtime_store, update_rx).await,
             _ => Err("sse→output transport not supported".to_string()),
         }
     } else if config.streamable_http.is_some() {
         match config.output_transport {
             OutputTransport::Stdio => {
-                streamable_http_to_stdio::run(config, logger, runtime_store, update_rx).await
+                streamable_http_to_stdio::run(config, runtime_store, update_rx).await
             }
             _ => Err("streamableHttp→output transport not supported".to_string()),
         }
@@ -126,7 +124,7 @@ async fn main() {
     };
 
     if let Err(err) = result {
-        eprintln!("[supergateway] Fatal error: {err}");
+        tracing::error!("Fatal error: {err}");
         std::process::exit(1);
     }
 }
