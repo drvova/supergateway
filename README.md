@@ -16,13 +16,13 @@ cargo build --release
 Run Supergateway using the built binary:
 
 ```bash
-./rust/target/release/supergateway --stdio "uvx mcp-server-git"
+./rust/target/release/supergateway --stdio "./my-mcp-server --root ."
 ```
 
 For development:
 
 ```bash
-cargo run --manifest-path rust/Cargo.toml -- --stdio "uvx mcp-server-git"
+cargo run --manifest-path rust/Cargo.toml -- --stdio "./my-mcp-server --root ."
 ```
 
 - **`--stdio "command"`**: Command that runs an MCP server over stdio
@@ -82,7 +82,7 @@ The Rust build uses `tracing` with optional OpenTelemetry OTLP export. Logs alwa
 ```bash
 cd rust
 export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
-cargo run -- --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" --port 8000
+cargo run -- --stdio "./my-mcp-server --root ./my-folder" --port 8000
 ```
 You should see spans/logs in your local collector. If you want to adjust local verbosity, set `RUST_LOG=debug` or `RUST_LOG=info`.
 
@@ -92,7 +92,7 @@ Expose an MCP stdio server as an SSE server:
 
 ```bash
 ./rust/target/release/supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --stdio "./my-mcp-server --root ./my-folder" \
     --port 8000 --baseUrl http://localhost:8000 \
     --ssePath /sse --messagePath /message
 ```
@@ -144,7 +144,7 @@ Expose an MCP stdio server as a Streamable HTTP server.
 
 ```bash
 ./rust/target/release/supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --stdio "./my-mcp-server --root ./my-folder" \
     --outputTransport streamableHttp \
     --port 8000
 ```
@@ -153,7 +153,7 @@ Expose an MCP stdio server as a Streamable HTTP server.
 
 ```bash
 ./rust/target/release/supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --stdio "./my-mcp-server --root ./my-folder" \
     --outputTransport streamableHttp --stateful \
     --sessionTimeout 60000 --port 8000
 ```
@@ -166,35 +166,18 @@ Expose an MCP stdio server as a WebSocket server:
 
 ```bash
 ./rust/target/release/supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem ./my-folder" \
+    --stdio "./my-mcp-server --root ./my-folder" \
     --port 8000 --outputTransport ws --messagePath /message
 ```
 
 - **WebSocket endpoint**: `ws://localhost:8000/message`
-
-## Example with MCP Inspector (stdio → SSE mode)
-
-1. **Run Supergateway**:
-
-```bash
-./rust/target/release/supergateway --port 8000 \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem /Users/MyName/Desktop"
-```
-
-2. **Use MCP Inspector**:
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-You can now list tools, resources, or perform MCP actions via Supergateway.
 
 ## Using with ngrok
 
 Use [ngrok](https://ngrok.com/) to share your local MCP server publicly:
 
 ```bash
-./rust/target/release/supergateway --port 8000 --stdio "npx -y @modelcontextprotocol/server-filesystem ."
+./rust/target/release/supergateway --port 8000 --stdio "./my-mcp-server --root ."
 
 # In another terminal:
 ngrok http 8000
@@ -212,7 +195,7 @@ Build and run the Rust image:
 docker build -f docker/Dockerfile -t supergateway .
 
 docker run -it --rm -p 8000:8000 supergateway \
-    --stdio "npx -y @modelcontextprotocol/server-filesystem /" \
+    --stdio "/usr/local/bin/my-mcp-server --root /" \
     --port 8000
 ```
 
