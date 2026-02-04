@@ -139,6 +139,33 @@ impl StdioChild {
         Ok(())
     }
 
+    pub async fn is_alive(&self) -> bool {
+        let mut needs_clear = false;
+        {
+            let mut guard = self.child.lock().await;
+            let Some(child) = guard.as_mut() else {
+                return false;
+            };
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    *guard = None;
+                    needs_clear = true;
+                }
+                Ok(None) => return true,
+                Err(err) => {
+                    tracing::error!("Failed to poll child status: {err}");
+                    *guard = None;
+                    needs_clear = true;
+                }
+            }
+        }
+        if needs_clear {
+            let mut stdin = self.stdin.lock().await;
+            *stdin = None;
+        }
+        false
+    }
+
     pub async fn restart(&self, runtime: &RuntimeArgs) -> Result<(), String> {
         self.restarting.store(true, Ordering::SeqCst);
         {

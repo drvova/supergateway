@@ -4,11 +4,13 @@ use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::codec::{FramedRead, LinesCodec};
+use uuid::Uuid;
 
 use crate::config::Config;
 use crate::support::signals::install_signal_handlers;
 use crate::runtime::{RuntimeApplyResult, RuntimeScope, RuntimeUpdateRequest};
 use crate::runtime::store::RuntimeArgsStore;
+use crate::types::HeadersMap;
 
 pub async fn run(
     config: Config,
@@ -31,6 +33,7 @@ pub async fn run(
     let session_id: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
     let session_for_sse = session_id.clone();
     let headers = config.headers.clone();
+    let protocol_version = config.protocol_version.clone();
 
     let http = reqwest::Client::new();
     let session_clone = session_id.clone();
@@ -102,6 +105,7 @@ pub async fn run(
     });
 
     let mut lines = FramedRead::new(tokio::io::stdin(), LinesCodec::new());
+    let mut initialized = false;
 
     while let Some(line) = lines.next().await {
         let line = line.map_err(|err| err.to_string())?;
@@ -113,30 +117,256 @@ pub async fn run(
             continue;
         };
 
-        let runtime_args = runtime.get_effective(None).await;
-        let mut req = http.post(&streamable_http_url).json(&message);
-        for (k, v) in headers.iter().chain(runtime_args.headers.iter()) {
-            req = req.header(k, v);
-        }
-        if let Some(sid) = session_clone.read().await.clone() {
-            req = req.header("Mcp-Session-Id", sid);
+        if !is_request(&message) {
+            println!("{}", message);
+            continue;
         }
 
-        let response = req.send().await.map_err(|err| err.to_string())?;
-        if let Some(sid) = response.headers().get("Mcp-Session-Id").and_then(|v| v.to_str().ok()) {
-            *session_clone.write().await = Some(sid.to_string());
-        }
-        if response.status().is_success() {
-            if let Ok(json) = response.json::<serde_json::Value>().await {
-                println!("{}", json);
+        let runtime_args = runtime.get_effective(None).await;
+        if !initialized && !is_initialize_request(&message) {
+            let init_id = auto_init_id();
+            let init_message = create_initialize_request(&init_id, &protocol_version);
+            let init_payload = send_request(
+                &http,
+                &streamable_http_url,
+                &runtime_args.headers,
+                &session_clone,
+                &init_message,
+            )
+            .await;
+            if init_payload.get("error").is_some() {
+                let response = wrap_response(&message, init_payload);
+                println!("{}", response);
+                continue;
             }
-        } else {
-            tracing::error!(
-                "Streamable HTTP request failed with status {}",
-                response.status()
-            );
+            if let Err(err) = send_initialized_notification(
+                &http,
+                &streamable_http_url,
+                &runtime_args.headers,
+                &session_clone,
+            )
+            .await
+            {
+                tracing::error!("Failed to send initialized notification: {err}");
+            } else {
+                initialized = true;
+            }
         }
+
+        let payload = send_request(
+            &http,
+            &streamable_http_url,
+            &runtime_args.headers,
+            &session_clone,
+            &message,
+        )
+        .await;
+
+        if is_initialize_request(&message) && payload.get("error").is_none() && !initialized {
+            if let Err(err) = send_initialized_notification(
+                &http,
+                &streamable_http_url,
+                &runtime_args.headers,
+                &session_clone,
+            )
+            .await
+            {
+                tracing::error!("Failed to send initialized notification: {err}");
+            } else {
+                initialized = true;
+            }
+        }
+
+        let response = wrap_response(&message, payload);
+        println!("{}", response);
     }
 
     Ok(())
+}
+
+fn is_request(message: &serde_json::Value) -> bool {
+    message.get("method").is_some() && message.get("id").is_some()
+}
+
+fn is_initialize_request(message: &serde_json::Value) -> bool {
+    message
+        .get("method")
+        .and_then(|method| method.as_str())
+        .map(|method| method == "initialize")
+        .unwrap_or(false)
+}
+
+fn auto_init_id() -> String {
+    format!(
+        "init_{}_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        Uuid::new_v4()
+    )
+}
+
+fn create_initialize_request(id: &str, protocol_version: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {
+                "roots": { "listChanged": true },
+                "sampling": {}
+            },
+            "clientInfo": {
+                "name": "supergateway",
+                "version": crate::support::version::get_version()
+            }
+        }
+    })
+}
+
+fn create_initialized_notification() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized"
+    })
+}
+
+async fn send_request(
+    http: &reqwest::Client,
+    url: &str,
+    headers: &HeadersMap,
+    session_id: &Arc<RwLock<Option<String>>>,
+    message: &serde_json::Value,
+) -> serde_json::Value {
+    let mut req = http.post(url).json(message);
+    for (k, v) in headers.iter() {
+        req = req.header(k, v);
+    }
+    if let Some(sid) = session_id.read().await.clone() {
+        req = req.header("Mcp-Session-Id", sid);
+    }
+    match req.send().await {
+        Ok(resp) => {
+            if let Some(sid) = resp
+                .headers()
+                .get("Mcp-Session-Id")
+                .and_then(|v| v.to_str().ok())
+            {
+                *session_id.write().await = Some(sid.to_string());
+            }
+            match parse_response_payload(resp).await {
+                Ok(payload) => payload,
+                Err(err) => error_payload(-32000, err),
+            }
+        }
+        Err(err) => error_payload(-32000, err.to_string()),
+    }
+}
+
+async fn send_initialized_notification(
+    http: &reqwest::Client,
+    url: &str,
+    headers: &HeadersMap,
+    session_id: &Arc<RwLock<Option<String>>>,
+) -> Result<(), String> {
+    let message = create_initialized_notification();
+    let mut req = http.post(url).json(&message);
+    for (k, v) in headers.iter() {
+        req = req.header(k, v);
+    }
+    if let Some(sid) = session_id.read().await.clone() {
+        req = req.header("Mcp-Session-Id", sid);
+    }
+    let response = req.send().await.map_err(|err| err.to_string())?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Initialized notification failed with status {}",
+            response.status()
+        ))
+    }
+}
+
+async fn parse_response_payload(resp: reqwest::Response) -> Result<serde_json::Value, String> {
+    let status = resp.status();
+    let text = resp.text().await.map_err(|err| err.to_string())?;
+    if text.trim().is_empty() {
+        if status.is_success() {
+            return Err("Empty response".to_string());
+        }
+        return Err(format!("Request failed with status {}", status));
+    }
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    if !status.is_success() {
+        if let Some(error) = json.get("error") {
+            return Ok(serde_json::json!({ "error": error }));
+        }
+        return Err(format!("Request failed with status {}", status));
+    }
+    if json.get("error").is_some() {
+        return Ok(serde_json::json!({ "error": json.get("error").cloned().unwrap_or_default() }));
+    }
+    if let Some(result) = json.get("result") {
+        return Ok(serde_json::json!({ "result": result }));
+    }
+    Ok(serde_json::json!({ "result": json }))
+}
+
+fn wrap_response(req: &serde_json::Value, payload: serde_json::Value) -> serde_json::Value {
+    let jsonrpc = req
+        .get("jsonrpc")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("2.0".to_string()));
+    let id = req
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let mut response = serde_json::Map::new();
+    response.insert("jsonrpc".to_string(), jsonrpc);
+    response.insert("id".to_string(), id);
+
+    if let Some(error) = payload.get("error") {
+        if let Some(code) = error.get("code").and_then(|v| v.as_i64()) {
+            let message = error
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Internal error");
+            response.insert(
+                "error".to_string(),
+                serde_json::json!({
+                    "code": code,
+                    "message": normalize_error_message(code, message),
+                }),
+            );
+        } else {
+            response.insert("error".to_string(), error.clone());
+        }
+    } else if let Some(result) = payload.get("result") {
+        response.insert("result".to_string(), result.clone());
+    }
+
+    serde_json::Value::Object(response)
+}
+
+fn error_payload(code: i64, message: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "code": code,
+            "message": message.into(),
+        }
+    })
+}
+
+fn normalize_error_message(code: i64, message: &str) -> String {
+    let prefix = format!("MCP error {code}:");
+    if message.starts_with(&prefix) {
+        message[prefix.len()..].trim().to_string()
+    } else {
+        message.to_string()
+    }
 }

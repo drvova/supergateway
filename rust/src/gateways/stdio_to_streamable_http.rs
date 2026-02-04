@@ -30,6 +30,36 @@ struct AppState {
     stdio_cmd: String,
 }
 
+struct SessionResponseGuard {
+    manager: Arc<SessionManager>,
+    session_id: String,
+    reason: String,
+}
+
+impl Drop for SessionResponseGuard {
+    fn drop(&mut self) {
+        let manager = self.manager.clone();
+        let session_id = self.session_id.clone();
+        let reason = self.reason.clone();
+        tokio::spawn(async move {
+            manager.session_dec(&session_id, &reason).await;
+        });
+    }
+}
+
+fn attach_session_guard(
+    response: &mut Response,
+    manager: Arc<SessionManager>,
+    session_id: String,
+    reason: &str,
+) {
+    response.extensions_mut().insert(SessionResponseGuard {
+        manager,
+        session_id,
+        reason: reason.to_string(),
+    });
+}
+
 pub async fn run(
     config: Config,
     runtime: RuntimeArgsStore,
@@ -224,8 +254,10 @@ async fn stateful_post(
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_string());
 
+    let mut should_inc = false;
     let (session_id, session) = if let Some(id) = session_header {
         if let Some(session) = state.manager.get_session(&id).await {
+            should_inc = true;
             (id, session)
         } else {
             return (
@@ -267,7 +299,11 @@ async fn stateful_post(
             .into_response();
     };
 
-    state.manager.session_inc(&session_id, "POST request for existing session").await;
+    if should_inc {
+        state.manager
+            .session_inc(&session_id, "POST request for existing session")
+            .await;
+    }
 
     let response = if let Some(id) = payload.get("id").cloned() {
         match session.request(payload).await {
@@ -298,13 +334,17 @@ async fn stateful_post(
         }
     };
 
-    state.manager.session_dec(&session_id, "POST response finished").await;
-
     let mut response = response;
     response
         .headers_mut()
         .insert("Mcp-Session-Id", HeaderValue::from_str(&session_id).unwrap());
     apply_headers(&state, Some(&session_id), &mut response).await;
+    attach_session_guard(
+        &mut response,
+        state.manager.clone(),
+        session_id,
+        "POST response closed",
+    );
     response
 }
 
@@ -346,6 +386,12 @@ async fn stateful_get(
         .headers_mut()
         .insert("Mcp-Session-Id", HeaderValue::from_str(&session_id).unwrap());
     apply_headers(&state, Some(&session_id), &mut response).await;
+    attach_session_guard(
+        &mut response,
+        state.manager.clone(),
+        session_id,
+        "GET response closed",
+    );
     response
 }
 
@@ -363,9 +409,24 @@ async fn stateful_delete(
         return (StatusCode::BAD_REQUEST, "Invalid or missing session ID").into_response();
     };
 
+    if state.manager.get_session(&session_id).await.is_none() {
+        return (StatusCode::BAD_REQUEST, "Invalid or missing session ID").into_response();
+    }
+
+    state
+        .manager
+        .session_inc(&session_id, "DELETE request for existing session")
+        .await;
+
     if state.manager.remove_session(&session_id).await {
         let mut response = StatusCode::OK.into_response();
         apply_headers(&state, Some(&session_id), &mut response).await;
+        attach_session_guard(
+            &mut response,
+            state.manager.clone(),
+            session_id,
+            "DELETE response closed",
+        );
         response
     } else {
         (StatusCode::BAD_REQUEST, "Invalid or missing session ID").into_response()
@@ -500,9 +561,6 @@ impl SessionManager {
     async fn remove_session(&self, session_id: &str) -> bool {
         let mut sessions = self.sessions.lock().await;
         let removed = sessions.remove(session_id);
-        if let Some(counter) = &self.session_counter {
-            counter.clear(session_id, false, "session deletion").await;
-        }
         if let Some(session) = removed {
             session.child.shutdown().await;
             true

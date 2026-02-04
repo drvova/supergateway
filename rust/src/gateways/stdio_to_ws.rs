@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -24,6 +24,7 @@ struct AppState {
     child: Arc<StdioChild>,
     runtime: RuntimeArgsStore,
     base_headers: HeaderMap,
+    ready: Arc<AtomicBool>,
 }
 
 pub async fn run(
@@ -48,11 +49,13 @@ pub async fn run(
     let clients: Arc<Mutex<HashMap<String, mpsc::Sender<serde_json::Value>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    let ready = Arc::new(AtomicBool::new(false));
     let state = AppState {
         clients: clients.clone(),
         child: child.clone(),
         runtime: runtime.clone(),
         base_headers: header_map_from(&config.headers),
+        ready: ready.clone(),
     };
 
     let runtime_child = child.clone();
@@ -133,6 +136,8 @@ pub async fn run(
         }
     });
 
+    ready.store(true, Ordering::SeqCst);
+
     let addr: std::net::SocketAddr = ([0, 0, 0, 0], config.port).into();
     tracing::info!("Listening on port {}", config.port);
     tracing::info!(
@@ -200,6 +205,13 @@ async fn handle_socket(stream: WebSocket, state: AppState) {
 }
 
 async fn health_handler(state: AppState) -> impl IntoResponse {
+    if !state.child.is_alive().await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Child process has been killed")
+            .into_response();
+    }
+    if !state.ready.load(Ordering::SeqCst) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Server is not ready").into_response();
+    }
     let mut response = (StatusCode::OK, "ok").into_response();
     apply_headers(&state, &mut response).await;
     response

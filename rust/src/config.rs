@@ -355,7 +355,11 @@ fn parse_cors_flags(args: &[String]) -> CorsInput {
                 if next_val.starts_with("--") {
                     input.allow_all = true;
                 } else {
-                    input.values.push(next_val.clone());
+                    if next_val == "*" {
+                        input.allow_all = true;
+                    } else {
+                        input.values.push(next_val.clone());
+                    }
                     i += 1;
                 }
             } else {
@@ -367,21 +371,29 @@ fn parse_cors_flags(args: &[String]) -> CorsInput {
     input
 }
 
-fn parse_headers(header_values: &[String], oauth2_bearer: Option<&str>) -> Result<HeadersMap, ConfigError> {
+fn parse_headers(
+    header_values: &[String],
+    oauth2_bearer: Option<&str>,
+) -> Result<HeadersMap, ConfigError> {
     let mut headers: HashMap<String, String> = HashMap::new();
     for raw in header_values {
         let Some((key, value)) = raw.split_once(':') else {
+            tracing::error!("Invalid header format: {raw}, ignoring");
             continue;
         };
         let key = key.trim();
         let value = value.trim();
         if key.is_empty() || value.is_empty() {
+            tracing::error!("Invalid header format: {raw}, ignoring");
             continue;
         }
         headers.insert(key.to_string(), value.to_string());
     }
     if let Some(token) = oauth2_bearer {
-        headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+        let token = token.trim();
+        if !token.is_empty() {
+            headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+        }
     }
     Ok(headers)
 }

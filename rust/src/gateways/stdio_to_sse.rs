@@ -26,6 +26,7 @@ struct AppState {
     runtime: RuntimeArgsStore,
     base_headers: HeaderMap,
     message_path: String,
+    base_url: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -69,6 +70,7 @@ pub async fn run(
         runtime: runtime.clone(),
         base_headers: header_map_from(&config.headers),
         message_path: config.message_path.clone(),
+        base_url: config.base_url.clone(),
     };
 
     let runtime_child = child.clone();
@@ -165,7 +167,14 @@ async fn sse_handler(State(state): State<AppState>) -> Response {
         sessions.insert(session_id.clone(), tx.clone());
     }
 
-    let endpoint = format!("{}?sessionId={}", state.message_path, session_id);
+    let endpoint = if state.base_url.is_empty() {
+        format!("{}?sessionId={}", state.message_path, session_id)
+    } else {
+        format!(
+            "{}{}?sessionId={}",
+            state.base_url, state.message_path, session_id
+        )
+    };
     let _ = tx
         .send(Event::default().event("endpoint").data(endpoint))
         .await;
@@ -183,11 +192,38 @@ async fn message_handler(
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if query.session_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, "Missing sessionId parameter").into_response();
+        let mut response =
+            (StatusCode::BAD_REQUEST, "Missing sessionId parameter").into_response();
+        apply_headers(&state, &mut response).await;
+        return response;
+    }
+
+    let session_active = {
+        let mut sessions = state.sessions.lock().await;
+        match sessions.get(&query.session_id) {
+            Some(sender) if !sender.is_closed() => true,
+            Some(_) => {
+                sessions.remove(&query.session_id);
+                false
+            }
+            None => false,
+        }
+    };
+    if !session_active {
+        let mut response = (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("No active SSE connection for session {}", query.session_id),
+        )
+            .into_response();
+        apply_headers(&state, &mut response).await;
+        return response;
     }
 
     if state.child.send(&payload).await.is_err() {
-        return (StatusCode::BAD_GATEWAY, "Failed to write to child").into_response();
+        let mut response =
+            (StatusCode::BAD_GATEWAY, "Failed to write to child").into_response();
+        apply_headers(&state, &mut response).await;
+        return response;
     }
 
     let mut response = StatusCode::OK.into_response();

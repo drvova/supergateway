@@ -1,3 +1,4 @@
+use axum::http::header::HeaderName;
 use regex::Regex;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -6,10 +7,19 @@ use crate::config::CorsConfig;
 pub fn build_cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
     match cors {
         CorsConfig::Disabled => None,
-        CorsConfig::AllowAll => Some(CorsLayer::very_permissive()),
+        CorsConfig::AllowAll => Some(
+            CorsLayer::very_permissive()
+                .expose_headers([HeaderName::from_static("mcp-session-id")]),
+        ),
         CorsConfig::AllowList { raw } => {
             if raw.is_empty() {
                 return None;
+            }
+            if raw.iter().any(|origin| origin == "*") {
+                return Some(
+                    CorsLayer::very_permissive()
+                        .expose_headers([HeaderName::from_static("mcp-session-id")]),
+                );
             }
             let mut exact = Vec::new();
             let mut regexes: Vec<Regex> = Vec::new();
@@ -36,7 +46,11 @@ pub fn build_cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
                 }
                 false
             });
-            Some(CorsLayer::new().allow_origin(allow))
+            Some(
+                CorsLayer::new()
+                    .allow_origin(allow)
+                    .expose_headers([HeaderName::from_static("mcp-session-id")]),
+            )
         }
     }
 }
